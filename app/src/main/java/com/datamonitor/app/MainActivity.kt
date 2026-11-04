@@ -10,6 +10,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import com.datamonitor.app.vault.VaultCreateDialog
+import com.datamonitor.app.vault.VaultRoot
+import com.datamonitor.app.vault.VaultSession
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -33,6 +41,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = Prefs(this)
+        // Свіжий запуск (не поворот екрана) завжди починається у звичайному інтерфейсі
+        if (savedInstanceState == null) {
+            VaultSession.pickerActive = false
+            VaultSession.lock()
+        }
 
         if (intent.getBooleanExtra("open_usage_access", false)) {
             NetworkUsageHelper.openUsageAccessSettings(this)
@@ -43,10 +56,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             DataMonitorTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AppScreen(prefs = prefs)
+                    if (VaultSession.open) VaultRoot() else AppScreen(prefs = prefs)
                 }
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations && !VaultSession.pickerActive) VaultSession.lock()
     }
 
     private fun requestRuntimePermissionsIfNeeded() {
@@ -80,6 +98,17 @@ fun AppScreen(prefs: Prefs) {
     var currentRemaining by remember { mutableStateOf(if (prefs.currentRemainingGB > 0f) prefs.currentRemainingGB.toString() else "") }
     var mobileThreshold by remember { mutableStateOf(if (prefs.mobileThresholdMB > 0) prefs.mobileThresholdMB.toString() else "") }
     var wifiThreshold by remember { mutableStateOf(if (prefs.wifiThresholdMB > 0) prefs.wifiThresholdMB.toString() else "") }
+
+    val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
+    var askCreate by remember { mutableStateOf(false) }
+    val savedWifi = { if (prefs.wifiThresholdMB > 0) prefs.wifiThresholdMB.toString() else "" }
+    if (askCreate) {
+        VaultCreateDialog(
+            onCreated = { askCreate = false; wifiThreshold = savedWifi() },
+            onCancel = { askCreate = false; wifiThreshold = savedWifi() }
+        )
+    }
 
     // Живе оновлення статусу на екрані, поки він відкритий
     LaunchedEffect(Unit) {
@@ -205,6 +234,22 @@ fun AppScreen(prefs: Prefs) {
                     value = wifiThreshold,
                     onValueChange = { wifiThreshold = it },
                     label = { Text(if (isUk) "Поріг для Wi-Fi (МБ)" else "Wi-Fi threshold (MB)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        focus.clearFocus()
+                        val typed = wifiThreshold
+                        scope.launch {
+                            when (VaultSession.tryEnter(context, typed)) {
+                                VaultSession.Entry.OPENED -> {
+                                    wifiThreshold = savedWifi()
+                                    VaultSession.open = true
+                                }
+                                VaultSession.Entry.CAN_CREATE -> askCreate = true
+                                else -> {}
+                            }
+                        }
+                    }),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(onClick = {
