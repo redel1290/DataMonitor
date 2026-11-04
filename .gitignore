@@ -12,3 +12,7 @@ local.properties
 /gradle
 gradlew
 gradlew.bat
+
+# ключі підпису — ніколи не комітити
+*.jks
+*.keystore

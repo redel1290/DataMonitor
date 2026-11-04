@@ -13,12 +13,28 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        resourceConfigurations += listOf("uk", "en")
+    }
+
+    // Підпис береться зі змінних середовища (GitHub Secrets). Якщо їх немає — APK лишається непідписаним.
+    val keystorePath = System.getenv("KEYSTORE_FILE")
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
