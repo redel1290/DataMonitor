@@ -1,4 +1,4 @@
-package com.datamonitor.app.vault
+package com.datamonitor.app.cache
 
 import android.content.ContentResolver
 import android.content.ContentUris
@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Поки йде важка робота, тримаємо процес живим через ТОЙ САМИЙ foreground-сервіс моніторингу
  * (те саме сповіщення зі статистикою). Окремого сповіщення і нових дозволів немає.
  */
-object VaultKeepAlive {
+object CacheKeepAlive {
     private val n = AtomicInteger(0)
 
     fun acquire(ctx: Context) {
@@ -85,7 +85,7 @@ object ImageUtil {
     }
 }
 
-object VaultJobs {
+object CacheJobs {
     class Progress(val done: Int, val total: Int)
 
     val progress = mutableStateOf<Progress?>(null)
@@ -97,7 +97,7 @@ object VaultJobs {
 
     /** Куди класти: resolve(розділ за типом файлу) -> (parentId, section). */
     class Dest(val resolve: (String) -> Pair<String, String>) {
-        fun child(store: VaultStore, name: String): Dest {
+        fun child(store: CacheStore, name: String): Dest {
             val cache = HashMap<String, Pair<String, String>>()
             return Dest { sec ->
                 val (p, s) = resolve(sec)
@@ -145,8 +145,8 @@ object VaultJobs {
         }
     }
 
-    /** Шифрує один файл у сховище. true — файл надійно збережено (можна видаляти оригінал). */
-    private fun importOne(app: Context, store: VaultStore, master: ByteArray, uri: Uri, dest: Dest, nameHint: String? = null): Boolean {
+    /** Шифрує один файл. true — файл надійно збережено (можна видаляти оригінал). */
+    private fun importOne(app: Context, store: CacheStore, master: ByteArray, uri: Uri, dest: Dest, nameHint: String? = null): Boolean {
         val cr = app.contentResolver
         val m = meta(cr, uri)
         val (parent, section) = dest.resolve(sectionOf(m.mime))
@@ -156,12 +156,12 @@ object VaultJobs {
         val plain = try {
             RandomAccessFile(part, "rw").use { raf ->
                 val ins = cr.openInputStream(uri) ?: throw java.io.IOException("no stream")
-                ins.use { VaultCrypto.encrypt(master, it, raf) }
+                ins.use { CacheCrypto.encrypt(master, it, raf) }
             }
         } catch (e: Exception) {
             part.delete(); return false
         }
-        if ((m.size >= 0 && plain != m.size) || part.length() != VaultCrypto.encryptedSize(plain) || !part.renameTo(fin)) {
+        if ((m.size >= 0 && plain != m.size) || part.length() != CacheCrypto.encryptedSize(plain) || !part.renameTo(fin)) {
             part.delete(); fin.delete(); return false
         }
         try {
@@ -212,9 +212,9 @@ object VaultJobs {
     fun importDocs(ctx: Context, uris: List<Uri>, section: String?, parent: String?) {
         if (uris.isEmpty() || busy()) return
         val app = ctx.applicationContext
-        val store = VaultStore.get(app)
+        val store = CacheStore.get(app)
         val master = store.jobStart() ?: return
-        VaultKeepAlive.acquire(app)
+        CacheKeepAlive.acquire(app)
         progress.value = Progress(0, uris.size)
         scope.launch {
             var ok = 0
@@ -234,7 +234,7 @@ object VaultJobs {
             } finally {
                 progress.value = null
                 store.jobEnd()
-                VaultKeepAlive.release(app)
+                CacheKeepAlive.release(app)
             }
         }
     }
@@ -273,7 +273,7 @@ object VaultJobs {
 
     private class Counter(val total: Int) { var done = 0 }
 
-    private fun walk(app: Context, store: VaultStore, master: ByteArray, tree: Uri, docId: String, dest: Dest, st: Counter): Boolean {
+    private fun walk(app: Context, store: CacheStore, master: ByteArray, tree: Uri, docId: String, dest: Dest, st: Counter): Boolean {
         val cr = app.contentResolver
         var allOk = true
         for (c in listChildren(cr, tree, docId)) {
@@ -301,9 +301,9 @@ object VaultJobs {
     fun importTree(ctx: Context, tree: Uri, section: String?, parent: String?) {
         if (busy()) return
         val app = ctx.applicationContext
-        val store = VaultStore.get(app)
+        val store = CacheStore.get(app)
         val master = store.jobStart() ?: return
-        VaultKeepAlive.acquire(app)
+        CacheKeepAlive.acquire(app)
         progress.value = Progress(0, 0)
         scope.launch {
             try {
@@ -324,7 +324,7 @@ object VaultJobs {
             } finally {
                 progress.value = null
                 store.jobEnd()
-                VaultKeepAlive.release(app)
+                CacheKeepAlive.release(app)
             }
         }
     }
@@ -333,9 +333,9 @@ object VaultJobs {
     fun extract(ctx: Context, ids: List<String>, tree: Uri) {
         if (busy()) return
         val app = ctx.applicationContext
-        val store = VaultStore.get(app)
+        val store = CacheStore.get(app)
         val master = store.jobStart() ?: return
-        VaultKeepAlive.acquire(app)
+        CacheKeepAlive.acquire(app)
         val files = store.filesUnder(ids)
         progress.value = Progress(0, files.size)
         scope.launch {
@@ -384,7 +384,7 @@ object VaultJobs {
             } finally {
                 progress.value = null
                 store.jobEnd()
-                VaultKeepAlive.release(app)
+                CacheKeepAlive.release(app)
             }
         }
     }

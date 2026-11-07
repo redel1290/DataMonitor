@@ -1,4 +1,4 @@
-package com.datamonitor.app.vault
+package com.datamonitor.app.cache
 
 import android.content.Context
 import android.graphics.BitmapFactory
@@ -42,13 +42,13 @@ fun sectionOf(mime: String): String = when {
     else -> SEC_FILES
 }
 
-class VaultStore private constructor(app: Context) {
+class CacheStore private constructor(app: Context) {
 
     companion object {
-        @Volatile private var inst: VaultStore? = null
-        fun get(c: Context): VaultStore =
-            inst ?: synchronized(this) { inst ?: VaultStore(c.applicationContext).also { inst = it } }
-        fun peek(): VaultStore? = inst
+        @Volatile private var inst: CacheStore? = null
+        fun get(c: Context): CacheStore =
+            inst ?: synchronized(this) { inst ?: CacheStore(c.applicationContext).also { inst = it } }
+        fun peek(): CacheStore? = inst
         private const val BACKUP_MAGIC = 0x444D4231
         private val NAME_OK = Regex("^(i|d/[0-9a-f]{1,32}|t/[0-9a-f]{1,32})$")
     }
@@ -76,8 +76,8 @@ class VaultStore private constructor(app: Context) {
     @Synchronized
     fun create(pw: CharArray) {
         root.mkdirs(); dataDir; thumbDir
-        val m = VaultCrypto.random(32)
-        writeAtomic(keyFile, VaultCrypto.ksEncrypt(VaultCrypto.wrap(m, pw)))
+        val m = CacheCrypto.random(32)
+        writeAtomic(keyFile, CacheCrypto.ksEncrypt(CacheCrypto.wrap(m, pw)))
         master = m
         nodes.clear()
         saveIndex()
@@ -88,8 +88,8 @@ class VaultStore private constructor(app: Context) {
     fun unlock(pw: CharArray): Boolean {
         try {
             if (!keyFile.exists()) return false
-            val w = VaultCrypto.ksDecrypt(keyFile.readBytes())
-            val m = VaultCrypto.unwrap(w, pw) ?: return false
+            val w = CacheCrypto.ksDecrypt(keyFile.readBytes())
+            val m = CacheCrypto.unwrap(w, pw) ?: return false
             synchronized(this) {
                 loadIndex(m)
                 master = m
@@ -130,10 +130,10 @@ class VaultStore private constructor(app: Context) {
 
     fun changePassword(old: CharArray, new: CharArray): Boolean {
         return try {
-            val w = VaultCrypto.ksDecrypt(keyFile.readBytes())
-            VaultCrypto.unwrap(w, old) ?: return false
+            val w = CacheCrypto.ksDecrypt(keyFile.readBytes())
+            CacheCrypto.unwrap(w, old) ?: return false
             val m = master ?: return false
-            writeAtomic(keyFile, VaultCrypto.ksEncrypt(VaultCrypto.wrap(m, new)))
+            writeAtomic(keyFile, CacheCrypto.ksEncrypt(CacheCrypto.wrap(m, new)))
             true
         } catch (e: Exception) {
             false
@@ -144,14 +144,14 @@ class VaultStore private constructor(app: Context) {
     fun destroy() {
         wipe()
         root.deleteRecursively()
-        VaultCrypto.ksDelete()
+        CacheCrypto.ksDelete()
     }
 
     // ---------- індекс ----------
     private fun loadIndex(m: ByteArray) {
         nodes.clear()
         if (!indexFile.exists()) return
-        val arr = JSONArray(String(VaultCrypto.open(m, indexFile.readBytes()), Charsets.UTF_8))
+        val arr = JSONArray(String(CacheCrypto.open(m, indexFile.readBytes()), Charsets.UTF_8))
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             nodes.add(
@@ -172,7 +172,7 @@ class VaultStore private constructor(app: Context) {
                     .put("n", n.name).put("m", n.mime).put("z", n.size).put("a", n.added)
             )
         }
-        writeAtomic(indexFile, VaultCrypto.seal(m, arr.toString().toByteArray(Charsets.UTF_8)))
+        writeAtomic(indexFile, CacheCrypto.seal(m, arr.toString().toByteArray(Charsets.UTF_8)))
     }
 
     private fun writeAtomic(f: File, data: ByteArray) {
@@ -273,15 +273,15 @@ class VaultStore private constructor(app: Context) {
     }
 
     // ---------- файли ----------
-    fun openReader(id: String): VaultCrypto.Reader? {
+    fun openReader(id: String): CacheCrypto.Reader? {
         val m = master ?: return null
         val f = File(dataDir, id)
-        return if (f.exists()) VaultCrypto.Reader(m, f) else null
+        return if (f.exists()) CacheCrypto.Reader(m, f) else null
     }
 
     fun putThumb(id: String, jpeg: ByteArray) {
         val m = master ?: return
-        writeAtomic(File(thumbDir, id), VaultCrypto.seal(m, jpeg))
+        writeAtomic(File(thumbDir, id), CacheCrypto.seal(m, jpeg))
     }
 
     fun thumb(id: String): ImageBitmap? {
@@ -290,7 +290,7 @@ class VaultStore private constructor(app: Context) {
         val f = File(thumbDir, id)
         if (!f.exists()) return null
         return try {
-            val b = VaultCrypto.open(m, f.readBytes())
+            val b = CacheCrypto.open(m, f.readBytes())
             BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap()?.also { thumbCache.put(id, it) }
         } catch (e: Exception) {
             null
@@ -300,8 +300,8 @@ class VaultStore private constructor(app: Context) {
     // ---------- резервна копія ----------
     /** false — пароль не збігається. */
     fun writeBackup(pw: CharArray, out: OutputStream): Boolean {
-        val w = VaultCrypto.ksDecrypt(keyFile.readBytes())
-        VaultCrypto.unwrap(w, pw) ?: return false
+        val w = CacheCrypto.ksDecrypt(keyFile.readBytes())
+        CacheCrypto.unwrap(w, pw) ?: return false
         val files = ArrayList<Pair<String, File>>()
         if (indexFile.exists()) files.add("i" to indexFile)
         dataDir.listFiles()?.filter { !it.name.endsWith(".part") }?.forEach { files.add("d/${it.name}" to it) }
@@ -327,7 +327,7 @@ class VaultStore private constructor(app: Context) {
         return true
     }
 
-    /** false — пароль не збігається або файл пошкоджений. Замінює все сховище. */
+    /** false — пароль не збігається або файл пошкоджений. Замінює всі дані. */
     fun restoreBackup(pw: CharArray, ins: InputStream): Boolean {
         val tmp = File(appCtx.filesDir, "sys_new")
         try {
@@ -335,7 +335,7 @@ class VaultStore private constructor(app: Context) {
             val d = DataInputStream(ins.buffered())
             if (d.readInt() != BACKUP_MAGIC) return false
             val w = ByteArray(d.readInt().also { if (it !in 1..4096) return false }); d.readFully(w)
-            val m = VaultCrypto.unwrap(w, pw) ?: return false
+            val m = CacheCrypto.unwrap(w, pw) ?: return false
             val count = d.readInt()
             File(tmp, "d").mkdirs(); File(tmp, "t").mkdirs()
             val buf = ByteArray(64 * 1024)
@@ -352,7 +352,7 @@ class VaultStore private constructor(app: Context) {
                     }
                 }
             }
-            File(tmp, "k").writeBytes(VaultCrypto.ksEncrypt(w))
+            File(tmp, "k").writeBytes(CacheCrypto.ksEncrypt(w))
             synchronized(this) {
                 wipe()
                 val old = File(appCtx.filesDir, "sys_old")

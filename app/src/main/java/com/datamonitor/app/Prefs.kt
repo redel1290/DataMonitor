@@ -57,6 +57,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("speed_enabled", true)
         set(value) = sp.edit().putBoolean("speed_enabled", value).apply()
 
+    // Скільки застосунків показувати у повному списку; 0 = усі
+    var appListSize: Int
+        get() = sp.getInt("app_list_size", 15)
+        set(value) = sp.edit().putInt("app_list_size", value).apply()
+
     fun resetTopUp() {
         currentRemainingGB = planTotalGB
         remainingSetAtMillis = System.currentTimeMillis()

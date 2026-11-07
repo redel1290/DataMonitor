@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
-package com.datamonitor.app.vault
+package com.datamonitor.app.cache
 
 import android.app.Activity
 import android.content.Context
@@ -112,31 +112,31 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // ============================================================
-// Сесія: стан "сховище відкрите" живе в процесі, а не в Activity
+// Сесія живе в процесі, а не в Activity
 // ============================================================
-object VaultSession {
+object CacheSession {
     var open by mutableStateOf(false)
 
-    /** true, поки відкритий системний вибір файлів — тоді onStop не має блокувати сховище. */
+    /** true, поки відкритий системний вибір файлів — тоді onStop не скидає сесію. */
     @Volatile var pickerActive = false
 
     enum class Entry { NONE, OPENED, CAN_CREATE }
 
     fun lock() {
         open = false
-        VaultStore.peek()?.lock()
+        CacheStore.peek()?.lock()
     }
 
     suspend fun tryEnter(ctx: Context, text: String): Entry = withContext(Dispatchers.Default) {
         if (text.isEmpty()) return@withContext Entry.NONE
-        val s = VaultStore.get(ctx)
+        val s = CacheStore.get(ctx)
         if (s.exists()) {
             if (s.unlock(text.toCharArray())) Entry.OPENED else Entry.NONE
         } else if (text.length >= 6) Entry.CAN_CREATE else Entry.NONE
     }
 
     suspend fun create(ctx: Context, pw: String) = withContext(Dispatchers.Default) {
-        VaultStore.get(ctx).create(pw.toCharArray())
+        CacheStore.get(ctx).create(pw.toCharArray())
     }
 }
 
@@ -148,10 +148,10 @@ fun fmtSize(b: Long): String = when {
 }
 
 // ============================================================
-// Діалог створення (показується один раз, поки сховища ще немає)
+// Діалог першого налаштування пароля
 // ============================================================
 @Composable
-fun VaultCreateDialog(onCreated: () -> Unit, onCancel: () -> Unit) {
+fun CacheCreateDialog(onCreated: () -> Unit, onCancel: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var p1 by remember { mutableStateOf("") }
@@ -173,8 +173,8 @@ fun VaultCreateDialog(onCreated: () -> Unit, onCancel: () -> Unit) {
                     p1.length < 6 -> err = "Мінімум 6 символів"
                     p1 != p2 -> err = "Паролі не збігаються"
                     else -> scope.launch {
-                        VaultSession.create(ctx, p1)
-                        VaultSession.open = true
+                        CacheSession.create(ctx, p1)
+                        CacheSession.open = true
                         onCreated()
                     }
                 }
@@ -185,7 +185,7 @@ fun VaultCreateDialog(onCreated: () -> Unit, onCancel: () -> Unit) {
 }
 
 // ============================================================
-// Корінь сховища
+// Кореневий екран
 // ============================================================
 sealed class Screen {
     object Browse : Screen()
@@ -202,7 +202,7 @@ private fun secTitle(k: String) = when (k) {
 
 @Composable
 fun JobBanner() {
-    val prog = VaultJobs.progress.value
+    val prog = CacheJobs.progress.value
     if (prog != null) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Text(if (prog.total > 0) "Обробка: ${prog.done} / ${prog.total}" else "Обробка…")
@@ -210,19 +210,19 @@ fun JobBanner() {
             else LinearProgressIndicator(Modifier.fillMaxWidth())
         }
     }
-    VaultJobs.message.value?.let {
+    CacheJobs.message.value?.let {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(it, Modifier.weight(1f))
-            TextButton(onClick = { VaultJobs.message.value = null }) { Text("OK") }
+            TextButton(onClick = { CacheJobs.message.value = null }) { Text("OK") }
         }
     }
 }
 
 @Composable
-fun VaultRoot() {
+fun CacheRoot() {
     val ctx = LocalContext.current
     val act = ctx as? Activity
-    val store = remember { VaultStore.get(ctx) }
+    val store = remember { CacheStore.get(ctx) }
     val rev = store.rev   // підписка на зміни індексу
     val scope = rememberCoroutineScope()
 
@@ -246,37 +246,37 @@ fun VaultRoot() {
     }
 
     val pickDocs = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        VaultSession.pickerActive = false
+        CacheSession.pickerActive = false
         val (s, p) = target()
-        VaultJobs.importDocs(ctx, uris, s, p)
+        CacheJobs.importDocs(ctx, uris, s, p)
     }
     val pickTree = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        VaultSession.pickerActive = false
+        CacheSession.pickerActive = false
         if (uri != null) {
             val (s, p) = target()
-            VaultJobs.importTree(ctx, uri, s, p)
+            CacheJobs.importTree(ctx, uri, s, p)
         }
     }
     val pickExtract = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        VaultSession.pickerActive = false
+        CacheSession.pickerActive = false
         if (uri != null) {
-            VaultJobs.extract(ctx, selected.toList(), uri)
+            CacheJobs.extract(ctx, selected.toList(), uri)
             selected = emptySet()
         }
     }
     val delLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
-        VaultSession.pickerActive = false
+        CacheSession.pickerActive = false
     }
-    val pend = VaultJobs.pendingDelete.value
+    val pend = CacheJobs.pendingDelete.value
     LaunchedEffect(pend) {
         if (pend.isNotEmpty()) {
-            VaultJobs.pendingDelete.value = emptyList()
+            CacheJobs.pendingDelete.value = emptyList()
             try {
                 val pi = MediaStore.createDeleteRequest(ctx.contentResolver, pend)
-                VaultSession.pickerActive = true
+                CacheSession.pickerActive = true
                 delLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
             } catch (e: Exception) {
-                VaultSession.pickerActive = false
+                CacheSession.pickerActive = false
             }
         }
     }
@@ -286,7 +286,7 @@ fun VaultRoot() {
             screen !is Screen.Browse -> screen = Screen.Browse
             selected.isNotEmpty() -> selected = emptySet()
             stack.isNotEmpty() -> stack = stack.dropLast(1)
-            else -> VaultSession.lock()
+            else -> CacheSession.lock()
         }
     }
     BackHandler { goBack() }
@@ -369,15 +369,15 @@ fun VaultRoot() {
             text = {
                 Column {
                     TextButton(onClick = {
-                        showAdd = false; VaultSession.pickerActive = true
+                        showAdd = false; CacheSession.pickerActive = true
                         pickDocs.launch(arrayOf("image/*", "video/*"))
                     }) { Text("Фото й відео") }
                     TextButton(onClick = {
-                        showAdd = false; VaultSession.pickerActive = true
+                        showAdd = false; CacheSession.pickerActive = true
                         pickDocs.launch(arrayOf("*/*"))
                     }) { Text("Файли") }
                     TextButton(onClick = {
-                        showAdd = false; VaultSession.pickerActive = true
+                        showAdd = false; CacheSession.pickerActive = true
                         pickTree.launch(null)
                     }) { Text("Папка з телефону") }
                     if (stack.isNotEmpty()) TextButton(onClick = { showAdd = false; newFolder = true }) { Text("Нова папка") }
@@ -424,7 +424,7 @@ fun VaultRoot() {
             text = { Text("Обрані елементи (${selected.size}) буде збережено у вибрану папку й прибрано звідси.") },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmExtract = false; VaultSession.pickerActive = true
+                    confirmExtract = false; CacheSession.pickerActive = true
                     pickExtract.launch(null)
                 }) { Text("Обрати папку") }
             },
@@ -434,7 +434,7 @@ fun VaultRoot() {
 }
 
 @Composable
-private fun MainMenu(store: VaultStore, rev: Int, open: (String) -> Unit) {
+private fun MainMenu(store: CacheStore, rev: Int, open: (String) -> Unit) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         listOf(SEC_PHOTOS to "📷", SEC_VIDEOS to "🎬", SEC_FILES to "📁").forEach { (k, icon) ->
             val count = remember(rev) { store.countIn(k) }
@@ -456,7 +456,7 @@ private fun MainMenu(store: VaultStore, rev: Int, open: (String) -> Unit) {
 }
 
 @Composable
-private fun Tile(store: VaultStore, n: Node, sel: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+private fun Tile(store: CacheStore, n: Node, sel: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
     Box(
         Modifier.aspectRatio(1f).clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -484,41 +484,41 @@ private fun Tile(store: VaultStore, n: Node, sel: Boolean, onClick: () -> Unit, 
 // ============================================================
 // Налаштування
 // ============================================================
-object VaultBackup {
+object CacheBackup {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun run(ctx: Context, okText: String, work: (Context) -> Boolean) {
-        if (VaultJobs.progress.value != null) {
-            VaultJobs.message.value = "Зачекайте завершення поточної операції"; return
+        if (CacheJobs.progress.value != null) {
+            CacheJobs.message.value = "Зачекайте завершення поточної операції"; return
         }
         val app = ctx.applicationContext
-        VaultKeepAlive.acquire(app)
-        VaultJobs.progress.value = VaultJobs.Progress(0, 0)
+        CacheKeepAlive.acquire(app)
+        CacheJobs.progress.value = CacheJobs.Progress(0, 0)
         scope.launch {
             try {
-                VaultJobs.message.value = if (work(app)) okText else "Невірний пароль або пошкоджений файл"
+                CacheJobs.message.value = if (work(app)) okText else "Невірний пароль або пошкоджений файл"
             } catch (e: Throwable) {
-                VaultJobs.message.value = "Помилка: ${e.message}"
+                CacheJobs.message.value = "Помилка: ${e.message}"
             } finally {
-                VaultJobs.progress.value = null
-                VaultKeepAlive.release(app)
+                CacheJobs.progress.value = null
+                CacheKeepAlive.release(app)
             }
         }
     }
 
     fun backup(ctx: Context, pw: String, uri: Uri) = run(ctx, "Резервну копію збережено") { app ->
-        val ok = app.contentResolver.openOutputStream(uri)?.use { VaultStore.get(app).writeBackup(pw.toCharArray(), it) } ?: false
+        val ok = app.contentResolver.openOutputStream(uri)?.use { CacheStore.get(app).writeBackup(pw.toCharArray(), it) } ?: false
         if (!ok) try { DocumentsContract.deleteDocument(app.contentResolver, uri) } catch (_: Exception) {}
         ok
     }
 
-    fun restore(ctx: Context, pw: String, uri: Uri) = run(ctx, "Сховище відновлено") { app ->
-        app.contentResolver.openInputStream(uri)?.use { VaultStore.get(app).restoreBackup(pw.toCharArray(), it) } ?: false
+    fun restore(ctx: Context, pw: String, uri: Uri) = run(ctx, "Дані відновлено") { app ->
+        app.contentResolver.openInputStream(uri)?.use { CacheStore.get(app).restoreBackup(pw.toCharArray(), it) } ?: false
     }
 }
 
 @Composable
-fun SettingsScreen(store: VaultStore, onBack: () -> Unit) {
+fun SettingsScreen(store: CacheStore, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var oldPw by remember { mutableStateOf("") }
@@ -531,15 +531,15 @@ fun SettingsScreen(store: VaultStore, onBack: () -> Unit) {
     var restoreUri by remember { mutableStateOf<Uri?>(null) }
     var restorePw by remember { mutableStateOf("") }
     var confirmDestroy by remember { mutableStateOf(false) }
-    val busy = VaultJobs.progress.value != null
+    val busy = CacheJobs.progress.value != null
 
     val createDoc = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        VaultSession.pickerActive = false
-        if (uri != null) VaultBackup.backup(ctx, backupPw, uri)
+        CacheSession.pickerActive = false
+        if (uri != null) CacheBackup.backup(ctx, backupPw, uri)
         backupPw = ""
     }
     val openDoc = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        VaultSession.pickerActive = false
+        CacheSession.pickerActive = false
         if (uri != null) restoreUri = uri
     }
 
@@ -593,7 +593,7 @@ fun SettingsScreen(store: VaultStore, onBack: () -> Unit) {
             text = { OutlinedTextField(backupPw, { backupPw = it }, singleLine = true, label = { Text("Поточний пароль") }) },
             confirmButton = {
                 TextButton(onClick = {
-                    askBackupPw = false; VaultSession.pickerActive = true
+                    askBackupPw = false; CacheSession.pickerActive = true
                     createDoc.launch("dm_data.bin")
                 }) { Text("Далі") }
             },
@@ -607,7 +607,7 @@ fun SettingsScreen(store: VaultStore, onBack: () -> Unit) {
             text = { Text("Поточні дані будуть повністю замінені даними з копії.") },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmRestore = false; VaultSession.pickerActive = true
+                    confirmRestore = false; CacheSession.pickerActive = true
                     openDoc.launch(arrayOf("*/*"))
                 }) { Text("Обрати файл") }
             },
@@ -621,7 +621,7 @@ fun SettingsScreen(store: VaultStore, onBack: () -> Unit) {
             text = { OutlinedTextField(restorePw, { restorePw = it }, singleLine = true, label = { Text("Пароль") }) },
             confirmButton = {
                 TextButton(onClick = {
-                    VaultBackup.restore(ctx, restorePw, u)
+                    CacheBackup.restore(ctx, restorePw, u)
                     restoreUri = null; restorePw = ""
                 }) { Text("Відновити") }
             },
@@ -637,7 +637,7 @@ fun SettingsScreen(store: VaultStore, onBack: () -> Unit) {
                 TextButton(onClick = {
                     confirmDestroy = false
                     store.destroy()
-                    VaultSession.open = false
+                    CacheSession.open = false
                 }) { Text("Видалити") }
             },
             dismissButton = { TextButton(onClick = { confirmDestroy = false }) { Text("Скасувати") } }
@@ -649,7 +649,7 @@ fun SettingsScreen(store: VaultStore, onBack: () -> Unit) {
 // Перегляд фото / відео
 // ============================================================
 @Composable
-fun MediaViewer(store: VaultStore, ids: List<String>, start: Int, onClose: () -> Unit) {
+fun MediaViewer(store: CacheStore, ids: List<String>, start: Int, onClose: () -> Unit) {
     var idx by remember { mutableIntStateOf(start.coerceIn(0, (ids.size - 1).coerceAtLeast(0))) }
     val id = ids[idx]
     val n = store.find(id)
@@ -670,7 +670,7 @@ fun MediaViewer(store: VaultStore, ids: List<String>, start: Int, onClose: () ->
 }
 
 @Composable
-private fun ImageViewer(store: VaultStore, id: String) {
+private fun ImageViewer(store: CacheStore, id: String) {
     val bmp by produceState<ImageBitmap?>(null, id) {
         value = withContext(Dispatchers.IO) {
             try {
@@ -710,10 +710,10 @@ private fun ImageViewer(store: VaultStore, id: String) {
     }
 }
 
-/** Джерело даних ExoPlayer, яке розшифровує файл сховища на льоту, нічого не пишучи на диск. */
+/** Джерело даних ExoPlayer, яке розшифровує файл на льоту, нічого не пишучи на диск. */
 @androidx.annotation.OptIn(UnstableApi::class)
-private class VaultDataSource(private val store: VaultStore) : BaseDataSource(false) {
-    private var reader: VaultCrypto.Reader? = null
+private class CacheDataSource(private val store: CacheStore) : BaseDataSource(false) {
+    private var reader: CacheCrypto.Reader? = null
     private var cur: Uri? = null
     private var pos = 0L
     private var remaining = 0L
@@ -753,13 +753,13 @@ private class VaultDataSource(private val store: VaultStore) : BaseDataSource(fa
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-private fun VideoPlayer(store: VaultStore, id: String) {
+private fun VideoPlayer(store: CacheStore, id: String) {
     val ctx = LocalContext.current
     var ratio by remember { mutableFloatStateOf(16f / 9f) }
     val player = remember(id) {
         ExoPlayer.Builder(ctx).build().apply {
-            val f = DataSource.Factory { VaultDataSource(store) }
-            setMediaSource(ProgressiveMediaSource.Factory(f).createMediaSource(MediaItem.fromUri("vault://$id")))
+            val f = DataSource.Factory { CacheDataSource(store) }
+            setMediaSource(ProgressiveMediaSource.Factory(f).createMediaSource(MediaItem.fromUri("cache://$id")))
             addListener(object : Player.Listener {
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
                     if (videoSize.height > 0) ratio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
@@ -820,7 +820,7 @@ private fun fmtTime(ms: Long): String {
 private class TextState(val lines: List<String>, val isText: Boolean, val truncated: Boolean)
 
 @Composable
-fun TextViewer(store: VaultStore, id: String, onClose: () -> Unit) {
+fun TextViewer(store: CacheStore, id: String, onClose: () -> Unit) {
     val n = store.find(id)
     var state by remember { mutableStateOf<TextState?>(null) }
     var accepted by remember { mutableStateOf(false) }

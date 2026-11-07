@@ -1,4 +1,4 @@
-package com.datamonitor.app.vault
+package com.datamonitor.app.cache
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -22,7 +22,7 @@ import javax.crypto.spec.SecretKeySpec
  * Ключ файлу = HMAC(master, salt). Нонс = номер чанка. AAD = заголовок + номер + прапорець "останній".
  * Це дозволяє довільний доступ (перемотування відео) без розшифровки всього файлу.
  */
-object VaultCrypto {
+object CacheCrypto {
     const val CHUNK = 64 * 1024
     const val TAG = 16
     const val HEADER = 28

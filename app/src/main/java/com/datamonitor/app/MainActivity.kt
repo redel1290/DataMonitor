@@ -14,9 +14,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
-import com.datamonitor.app.vault.VaultCreateDialog
-import com.datamonitor.app.vault.VaultRoot
-import com.datamonitor.app.vault.VaultSession
+import com.datamonitor.app.cache.CacheCreateDialog
+import com.datamonitor.app.cache.CacheRoot
+import com.datamonitor.app.cache.CacheSession
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -43,8 +43,8 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         // Свіжий запуск (не поворот екрана) завжди починається у звичайному інтерфейсі
         if (savedInstanceState == null) {
-            VaultSession.pickerActive = false
-            VaultSession.lock()
+            CacheSession.pickerActive = false
+            CacheSession.lock()
         }
 
         if (intent.getBooleanExtra("open_usage_access", false)) {
@@ -54,9 +54,12 @@ class MainActivity : ComponentActivity() {
         requestRuntimePermissionsIfNeeded()
 
         setContent {
+            val showApps = remember { mutableStateOf(false) }
             DataMonitorTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    if (VaultSession.open) VaultRoot() else AppScreen(prefs = prefs)
+                    if (CacheSession.open) CacheRoot()
+                    else if (showApps.value) AppsScreen(prefs) { showApps.value = false }
+                    else AppScreen(prefs = prefs, onOpenApps = { showApps.value = true })
                 }
             }
         }
@@ -64,7 +67,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (!isChangingConfigurations && !VaultSession.pickerActive) VaultSession.lock()
+        if (!isChangingConfigurations && !CacheSession.pickerActive) CacheSession.lock()
     }
 
     private fun requestRuntimePermissionsIfNeeded() {
@@ -83,7 +86,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppScreen(prefs: Prefs) {
+fun AppScreen(prefs: Prefs, onOpenApps: () -> Unit) {
+    val appRows by rememberAppRows()
     val context = androidx.compose.ui.platform.LocalContext.current
     var lang by remember { mutableStateOf(prefs.language) }
     val isUk = lang == "uk"
@@ -104,7 +108,7 @@ fun AppScreen(prefs: Prefs) {
     var askCreate by remember { mutableStateOf(false) }
     val savedWifi = { if (prefs.wifiThresholdMB > 0) prefs.wifiThresholdMB.toString() else "" }
     if (askCreate) {
-        VaultCreateDialog(
+        CacheCreateDialog(
             onCreated = { askCreate = false; wifiThreshold = savedWifi() },
             onCancel = { askCreate = false; wifiThreshold = savedWifi() }
         )
@@ -175,6 +179,8 @@ fun AppScreen(prefs: Prefs) {
             }
         }
 
+        ActiveAppsCard(appRows, isUk, onOpenApps)
+
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
@@ -240,12 +246,12 @@ fun AppScreen(prefs: Prefs) {
                         focus.clearFocus()
                         val typed = wifiThreshold
                         scope.launch {
-                            when (VaultSession.tryEnter(context, typed)) {
-                                VaultSession.Entry.OPENED -> {
+                            when (CacheSession.tryEnter(context, typed)) {
+                                CacheSession.Entry.OPENED -> {
                                     wifiThreshold = savedWifi()
-                                    VaultSession.open = true
+                                    CacheSession.open = true
                                 }
-                                VaultSession.Entry.CAN_CREATE -> askCreate = true
+                                CacheSession.Entry.CAN_CREATE -> askCreate = true
                                 else -> {}
                             }
                         }

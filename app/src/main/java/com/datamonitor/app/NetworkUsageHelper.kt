@@ -124,6 +124,24 @@ object NetworkUsageHelper {
         }
     }
 
+    /** Додає до [into] байти (rx+tx) по кожному UID за [start]..[end] для заданого типу мережі. */
+    fun queryUidBytes(context: Context, statsType: Int, start: Long, end: Long, into: MutableMap<Int, Long>) {
+        if (!hasUsageAccess(context)) return
+        try {
+            val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as NetworkStatsManager
+            val subscriberId = if (statsType == ConnectivityManager.TYPE_MOBILE) getSubscriberIdSafe(context) else null
+            val bucket = NetworkStats.Bucket()
+            val stats = nsm.querySummary(statsType, subscriberId, start, end)
+            while (stats.hasNextBucket()) {
+                stats.getNextBucket(bucket)
+                into[bucket.uid] = (into[bucket.uid] ?: 0L) + bucket.rxBytes + bucket.txBytes
+            }
+            stats.close()
+        } catch (e: Exception) {
+            // немає даних для цього типу мережі — пропускаємо
+        }
+    }
+
     // Спроба отримати subscriberId. На звичайному (непривілейованому) застосунку
     // з API 29+ це майже завжди недоступно. Повертаємо null у разі невдачі —
     // це важливо: NetworkStatsManager при null subscriberId для власника
